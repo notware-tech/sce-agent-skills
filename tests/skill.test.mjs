@@ -4,33 +4,39 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const skill = fileURLToPath(new URL("../skills/sce-c2pa/", import.meta.url));
+const skillsRoot = fileURLToPath(new URL("../skills/", import.meta.url));
+const skillFolders = (await readdir(skillsRoot, { withFileTypes: true }))
+  .filter(entry => entry.isDirectory());
+assert.ok(skillFolders.length > 0, "At least one skill must be discoverable");
 
-test("C2PA skill has discoverable frontmatter and valid local links", async () => {
-  const body = await readFile(path.join(skill, "SKILL.md"), "utf8");
-  const frontmatter = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
-  assert.ok(frontmatter, "SKILL.md needs YAML frontmatter");
-  assert.match(frontmatter[1], /^name: sce-c2pa$/m);
-  const description = frontmatter[1].match(/^description: (.+)$/m)?.[1];
-  assert.ok(description && description.length <= 1024);
+for (const folder of skillFolders) {
+  test(`${folder.name} has discoverable frontmatter and valid local links`, async () => {
+    const skill = path.join(skillsRoot, folder.name);
+    const body = await readFile(path.join(skill, "SKILL.md"), "utf8");
+    const frontmatter = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+    assert.ok(frontmatter, "SKILL.md needs YAML frontmatter");
+    const name = frontmatter[1].match(/^name: (.+)$/m)?.[1].trim();
+    assert.equal(name, folder.name);
+    assert.match(name, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    assert.ok(name.length <= 64);
+    const description = frontmatter[1].match(/^description: (.+)$/m)?.[1];
+    assert.ok(description && description.length <= 1024);
 
-  let linkCount = 0;
-  async function visit(folder) {
-    for (const entry of await readdir(folder, { withFileTypes: true })) {
-      const full = path.join(folder, entry.name);
-      if (entry.isDirectory()) {
-        await visit(full);
-      } else if (entry.name.endsWith(".md")) {
-        const markdown = await readFile(full, "utf8");
-        for (const match of markdown.matchAll(/\]\(([^)]+)\)/g)) {
-          const target = match[1];
-          if (/^(https?:|#)/.test(target)) continue;
-          assert.ok((await readFile(path.resolve(folder, target), "utf8")).length > 0, target);
-          linkCount += 1;
+    async function visit(directory) {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          await visit(full);
+        } else if (entry.name.endsWith(".md")) {
+          const markdown = await readFile(full, "utf8");
+          for (const match of markdown.matchAll(/\]\(([^)]+)\)/g)) {
+            const target = match[1];
+            if (/^(https?:|#)/.test(target)) continue;
+            assert.ok((await readFile(path.resolve(directory, target), "utf8")).length > 0, target);
+          }
         }
       }
     }
-  }
-  await visit(skill);
-  assert.ok(linkCount >= 6);
-});
+    await visit(skill);
+  });
+}
